@@ -6,8 +6,9 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const { Command } = require('commander');
+const superagent = require('superagent'); // <-- Частина 3
 
-// ===== НАЛАШТУВАННЯ COMMANDER =====
+// ===== COMMANDER =====
 const program = new Command();
 
 program
@@ -18,74 +19,81 @@ program
 
 const options = program.opts();
 
-// ===== ШЛЯХ ДО КЕШУ =====
+// ===== КЕШ-ДИРЕКТОРІЯ =====
 const cacheDir = path.resolve(process.cwd(), options.cache);
 
-// створюємо кеш директорію, якщо немає
 if (!fs.existsSync(cacheDir)) {
   fs.mkdirSync(cacheDir, { recursive: true });
   console.log(`Створено директорію кешу: ${cacheDir}`);
-} else {
-  console.log(`Директорія кешу існує: ${cacheDir}`);
 }
 
-// ===== ДОПОМОЖНА ФУНКЦІЯ =====================================================
 function getFilePath(code) {
-  // зберігаємо кожен код як: 200.jpg, 404.jpg і тд
   return path.join(cacheDir, `${code}.jpg`);
 }
 
-// ===== СТВОРЕННЯ СЕРВЕРА =====================================================
-const server = http.createServer(async (req, res) => {
-  const url = req.url;  // /200
-  const code = url.slice(1); // "200"
+// =========================================================================
+//                             HTTP SERVER
+// =========================================================================
 
-  // Перевірка — шлях повинен бути типу /200
+const server = http.createServer(async (req, res) => {
+  const url = req.url;
+  const code = url.slice(1);
+
   if (!/^\d{3}$/.test(code)) {
     res.writeHead(400, { 'Content-Type': 'text/plain' });
-    return res.end('Invalid URL. Use form /200, /404 etc.');
+    return res.end('Invalid URL. Use /200');
   }
 
   const filePath = getFilePath(code);
 
   // ======================================================================
-  //                                GET
+  //                               GET
   // ======================================================================
   if (req.method === 'GET') {
+    // 1. спочатку пробуємо зчитати з кешу
     try {
       const data = await fsp.readFile(filePath);
       res.writeHead(200, { 'Content-Type': 'image/jpeg' });
       return res.end(data);
     } catch (err) {
-      res.writeHead(404, { 'Content-Type': 'text/plain' });
-      return res.end('Not Found');
+      // 2. якщо в кеші нема → робимо запит на http.cat
+      console.log(`Кеш не знайдено, робимо запит на http.cat/${code}...`);
+
+      try {
+        const response = await superagent.get(`https://http.cat/${code}`);
+
+        // збережемо у кеш
+        await fsp.writeFile(filePath, response.body);
+
+        res.writeHead(200, { 'Content-Type': 'image/jpeg' });
+        return res.end(response.body);
+      } catch (err2) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        return res.end('Not Found on http.cat');
+      }
     }
   }
 
   // ======================================================================
-  //                                PUT
+  //                               PUT
   // ======================================================================
   if (req.method === 'PUT') {
     try {
       const sourceImagePath = path.join(process.cwd(), 'test_images', 'cat.jpg');
-
-      // читаємо локальний файл
       const data = await fsp.readFile(sourceImagePath);
 
-      // записуємо в кеш під кодом (наприклад PUT /200 → cache/200.jpg)
       await fsp.writeFile(filePath, data);
 
       res.writeHead(201, { 'Content-Type': 'text/plain' });
       return res.end('Created (copied from test_images/cat.jpg)');
     } catch (err) {
-      console.error(err);
       res.writeHead(500, { 'Content-Type': 'text/plain' });
-      return res.end('Error writing image');
+      return res.end('Error writing file');
     }
   }
 
   // ======================================================================
-  //                               DELETE
+  //                              DELETE
   // ======================================================================
   if (req.method === 'DELETE') {
     try {
@@ -99,17 +107,20 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ======================================================================
-  //                     METHOD NOT ALLOWED for others
+  //                          METHOD NOT ALLOWED
   // ======================================================================
   res.writeHead(405, { 'Content-Type': 'text/plain' });
   res.end('Method Not Allowed');
 });
 
-// ===== ЗАПУСК СЕРВЕРА =========================================================
+// =========================================================================
+//                               START SERVER
+// =========================================================================
+
 server.listen(options.port, options.host, () => {
-  console.log(`Server listening at http://${options.host}:${options.port}`);
-  console.log(`Cache directory: ${cacheDir}`);
+  console.log(`Server running at http://${options.host}:${options.port}`);
 });
+
 
 
 
