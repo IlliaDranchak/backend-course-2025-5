@@ -1,1 +1,4 @@
 node_modules/
+test-images/*.jpg
+cache
+test_images

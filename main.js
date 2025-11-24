@@ -1,43 +1,115 @@
-const http = require('http');
-const { program } = require('commander');
-const fs = require('fs').promises;
-const path = require('path');
+#!/usr/bin/env node
 
-// Налаштування командного рядка
+// ===== ІМПОРТИ =====
+const http = require('node:http');
+const fs = require('node:fs');
+const fsp = require('node:fs/promises');
+const path = require('node:path');
+const { Command } = require('commander');
+
+// ===== НАЛАШТУВАННЯ COMMANDER =====
+const program = new Command();
+
 program
-  .requiredOption('-h, --host <host>', 'адреса сервера')
-  .requiredOption('-p, --port <port>', 'порт сервера', parseInt)
-  .requiredOption('-c, --cache <path>', 'шлях до директорії кешу');
+  .requiredOption('-h, --host <host>', 'server host')
+  .requiredOption('-p, --port <port>', 'server port', parseInt)
+  .requiredOption('-c, --cache <path>', 'cache directory path')
+  .parse(process.argv);
 
-program.parse();
+const options = program.opts();
 
-const { host, port, cache: cacheDir } = program.opts();
+// ===== ШЛЯХ ДО КЕШУ =====
+const cacheDir = path.resolve(process.cwd(), options.cache);
 
-// Створення директорії кешу, якщо не існує
-(async () => {
-  try {
-    await fs.mkdir(cacheDir, { recursive: true });
-    console.log(`Директорія кешу створена/перевірена: ${path.resolve(cacheDir)}`);
-  } catch (err) {
-    console.error('Помилка створення директорії кешу:', err);
-    process.exit(1);
+// створюємо кеш директорію, якщо немає
+if (!fs.existsSync(cacheDir)) {
+  fs.mkdirSync(cacheDir, { recursive: true });
+  console.log(`Створено директорію кешу: ${cacheDir}`);
+} else {
+  console.log(`Директорія кешу існує: ${cacheDir}`);
+}
+
+// ===== ДОПОМОЖНА ФУНКЦІЯ =====================================================
+function getFilePath(code) {
+  // зберігаємо кожен код як: 200.jpg, 404.jpg і тд
+  return path.join(cacheDir, `${code}.jpg`);
+}
+
+// ===== СТВОРЕННЯ СЕРВЕРА =====================================================
+const server = http.createServer(async (req, res) => {
+  const url = req.url;  // /200
+  const code = url.slice(1); // "200"
+
+  // Перевірка — шлях повинен бути типу /200
+  if (!/^\d{3}$/.test(code)) {
+    res.writeHead(400, { 'Content-Type': 'text/plain' });
+    return res.end('Invalid URL. Use form /200, /404 etc.');
   }
-})();
 
-// Створення HTTP-сервера
-const server = http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-  res.end('Проксі-сервер запущений. Частина 1 завершена.');
+  const filePath = getFilePath(code);
+
+  // ======================================================================
+  //                                GET
+  // ======================================================================
+  if (req.method === 'GET') {
+    try {
+      const data = await fsp.readFile(filePath);
+      res.writeHead(200, { 'Content-Type': 'image/jpeg' });
+      return res.end(data);
+    } catch (err) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      return res.end('Not Found');
+    }
+  }
+
+  // ======================================================================
+  //                                PUT
+  // ======================================================================
+  if (req.method === 'PUT') {
+    try {
+      const sourceImagePath = path.join(process.cwd(), 'test_images', 'cat.jpg');
+
+      // читаємо локальний файл
+      const data = await fsp.readFile(sourceImagePath);
+
+      // записуємо в кеш під кодом (наприклад PUT /200 → cache/200.jpg)
+      await fsp.writeFile(filePath, data);
+
+      res.writeHead(201, { 'Content-Type': 'text/plain' });
+      return res.end('Created (copied from test_images/cat.jpg)');
+    } catch (err) {
+      console.error(err);
+      res.writeHead(500, { 'Content-Type': 'text/plain' });
+      return res.end('Error writing image');
+    }
+  }
+
+  // ======================================================================
+  //                               DELETE
+  // ======================================================================
+  if (req.method === 'DELETE') {
+    try {
+      await fsp.unlink(filePath);
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      return res.end('Deleted');
+    } catch (err) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      return res.end('Not Found');
+    }
+  }
+
+  // ======================================================================
+  //                     METHOD NOT ALLOWED for others
+  // ======================================================================
+  res.writeHead(405, { 'Content-Type': 'text/plain' });
+  res.end('Method Not Allowed');
 });
 
-server.listen(port, host, () => {
-  console.log(`Сервер запущено на http://${host}:${port}`);
-  console.log(`Кеш: ${path.resolve(cacheDir)}`);
+// ===== ЗАПУСК СЕРВЕРА =========================================================
+server.listen(options.port, options.host, () => {
+  console.log(`Server listening at http://${options.host}:${options.port}`);
+  console.log(`Cache directory: ${cacheDir}`);
 });
 
-// Обробка помилок сервера
-server.on('error', (err) => {
-  console.error('Помилка сервера:', err);
-});
 
 

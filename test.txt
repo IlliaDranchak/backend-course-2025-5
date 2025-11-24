@@ -1,0 +1,9 @@
+curl -X PUT http://127.0.0.1:3000/200  копіює test_images/cat.jpg у кеш
+
+curl http://127.0.0.1:3000/200 --output out.jpg  витягує картинку з кешу
+
+curl -X DELETE http://127.0.0.1:3000/200  видаляє файл з кешу
+
+curl -X POST http://127.0.0.1:3000/200 перевірка на Method not allowed
+
+
